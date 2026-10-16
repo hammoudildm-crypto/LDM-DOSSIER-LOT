@@ -1,10 +1,38 @@
 <script setup>
-import { ref, reactive, computed, onMounted, inject } from 'vue'
+import { ref, reactive, computed, onMounted, inject, provide } from 'vue'
 import { supabase } from '../supabase'
 import PageHeader from '../components/PageHeader.vue'
 import IfHeader from '../components/IfHeader.vue'
+import EtapePesee from './EtapePesee.vue'
 
 const peutEditer = inject('peutEditer', ref(true))
+
+// Fabrique les collections remplissables de l'étape pesée (toutes vides).
+function peseeVide () {
+  const mk = (keys) => { const o = {}; keys.forEach(k => { o[k] = '' }); return o }
+  const mkN = (n, keys) => Array.from({ length: n }, () => mk(keys))
+  return {
+    A: '', B: '', certPA: '',
+    ajustPA: [mk(['nLot', 'titre', 'teneurEau', 'qTheo', 'qPeser', 'faitDV', 'verifDV'])],
+    ajustExc: [mk(['nLot', 'qTheo', 'qPeser', 'faitDV', 'verifDV'])],
+    vSalle: '', vFlux: '', vBalances: '', vMateriels: '', vTicketsPA: '', vTicketsExc: '', vFichesUtil: '',
+    condDem: mkN(2, ['etape', 'nSalle', 'heure', 'temp', 'hr', 'dp', 'dvOp', 'dvVerif']),
+    autor: mk(['instrGen', 'secu', 'condEnv', 'nettoyage']),
+    demSup: mk(['date', 'heure', 'visa']),
+    demAq: mk(['date', 'heure', 'visa']),
+    verifPrelim: mkN(3, ['oui', 'non', 'dv']),
+    operateurs: mkN(5, ['shift', 'poste', 'nom', 'date', 'visa', 'verifDV']),
+    equip: mkN(2, ['fonctVide', 'statutQual', 'etatVitr', 'faitDV', 'verifDV', 'obs']),
+    etal: mkN(2, ['effectue', 'date', 'dvOp', 'dvVerif', 'obs']),
+    condProc: mkN(6, ['date', 'moment', 'heure', 'temp', 'hr', 'dp', 'nSalle', 'fait', 'verif']),
+    retInterne: mkN(7, ['nLot', 'qte', 'etiq', 'ddr', 'ddp', 'faitDV', 'verifDV']),
+    recExterne: mkN(7, ['nLot', 'contenant', 'etiq', 'qCom', 'qLiv', 'ddr', 'ddp', 'faitDV', 'verifDV']),
+    peseePA: { debH: '', debD: '', finH: '', finD: '', lignes: [mk(['nLot', 'codeBal', 'g', 't', 'n', 'faitDV', 'b', 'verifDV'])] },
+    peseeExc: { debD: '', debH: '', finH: '', finD: '', lignes: mkN(6, ['nLot', 'codeBal', 'g', 't', 'n', 'faitDV', 'b', 'verifDV']) },
+    bilan: { bonCom: '', bonRetInt: '', bonRetFin: '', bonAvarie: '', justif: '', dvResp: '', lignes: mkN(7, ['qLiv', 'qPes', 'qRetInt', 'qRetFin', 'qAvar', 'dvSup']) },
+    incidents: mkN(3, ['date', 'heureArret', 'nSac', 'motif', 'action', 'dateDem', 'heureDem', 'visa'])
+  }
+}
 
 /* ============================================================
    Réplique de l'Instruction de Fabrication (IF) — LDM
@@ -45,10 +73,12 @@ function docVide () {
       visaSupFab: '', visaRespFab: '', visaAq: ''
     },
     pied: { redacteur: '', verificateur: '', approbateur: '' },
+    pesee: peseeVide(),
     statut: 'Brouillon'
   }
 }
 const d = reactive(docVide())
+provide('doc', d)
 const dossierId = ref(null)
 
 /* ---------------- Supabase ---------------- */
@@ -197,7 +227,7 @@ onMounted(charger)
     <!-- ================= DOCUMENT IF ================= -->
     <!-- PAGE 1 — Visas d'approbation (FRM1) -->
     <div class="if-sheet">
-      <IfHeader :e="d.entete" frm="FRM1" :page="1" />
+      <IfHeader frm="FRM1" :page="1" />
 
       <table class="ap">
         <thead><tr><th class="c1">Rédacteur</th><th class="c2">Fonction</th><th class="c3">Date &amp; Visa</th></tr></thead>
@@ -234,7 +264,7 @@ onMounted(charger)
 
     <!-- PAGE 2 — Identification (FRM2) -->
     <div class="if-sheet">
-      <IfHeader :e="d.entete" frm="FRM2" :page="2" />
+      <IfHeader frm="FRM2" :page="2" />
 
       <table class="kv">
         <tbody>
@@ -283,6 +313,9 @@ onMounted(charger)
         <tbody><tr><td><input class="cell" v-model="d.pied.redacteur" /></td><td><input class="cell" v-model="d.pied.verificateur" /></td><td><input class="cell" v-model="d.pied.approbateur" /></td></tr></tbody>
       </table>
     </div>
+
+    <!-- ========== ÉTAPE PESÉE (pages 3 à 24) ========== -->
+    <EtapePesee />
   </div>
 </template>
 
@@ -314,29 +347,6 @@ onMounted(charger)
 .btn.ghost { background: #fff; color: #0e7490; border: 1px solid #a5f3fc; }
 .btn.sm { padding: 6px 12px; font-size: 13px; }
 .btn.danger { color: #be123c; border-color: #fecaca; }
-
-/* -------- Feuille document IF -------- */
-.if-sheet { background: #fff; border: 1px solid #94a3b8; max-width: 820px; margin: 0 auto 22px; padding: 16px 18px; box-shadow: 0 2px 10px rgba(16,24,40,.08); }
-.if-sheet table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; color: #111; }
-.if-sheet th, .if-sheet td { border: 1px solid #111; padding: 4px 6px; text-align: left; vertical-align: middle; }
-.if-sheet th { background: #f1f5f9; font-weight: 700; font-size: 10px; }
-.if-sheet .cell { width: 100%; border: 0; background: transparent; font: inherit; font-size: 11px; padding: 3px 2px; min-height: 26px; color: #1d4ed8; }
-.if-sheet .cell:focus { outline: 1px solid #67e8f9; background: #ecfeff; }
-.ap .c1 { width: 26%; } .ap .c2 { width: 48%; } .ap .c3 { width: 26%; }
-.ap td { height: 34px; }
-.kv .k { width: 34%; font-weight: 700; background: #f8fafc; }
-.lot4 th { width: 25%; }
-.proc .k { width: 20%; font-weight: 700; background: #f8fafc; white-space: nowrap; }
-.dev .dvk { width: 20%; font-weight: 700; background: #f8fafc; }
-.visas3 th { width: 33.33%; }
-.pied { margin-top: 14px; }
-.pied th { font-size: 9.5px; }
-.pied td { height: 34px; }
-
-@media print {
-  .noprint { display: none !important; }
-  .if-sheet { border: 0; box-shadow: none; max-width: none; margin: 0; padding: 0; page-break-after: always; }
-  .if-sheet .cell { color: #000; }
-}
-@media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } .if-sheet { padding: 10px; } }
+/* Les styles du document IF (.if-sheet, tables, .cell, pied…) sont globaux dans App.vue. */
+@media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
 </style>
