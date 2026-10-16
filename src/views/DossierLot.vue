@@ -4,17 +4,24 @@ import { supabase } from '../supabase'
 import PageHeader from '../components/PageHeader.vue'
 import IfHeader from '../components/IfHeader.vue'
 import EtapePesee from './EtapePesee.vue'
+import GestionProduits from '../components/GestionProduits.vue'
 import { PRODUITS_REF } from '../produitsRef.js'
 
 const peutEditer = inject('peutEditer', ref(true))
 
-// Fabrique les collections remplissables de l'étape pesée (toutes vides).
-function peseeVide () {
+// Fabrique les collections remplissables de l'étape pesée (toutes vides),
+// dimensionnées selon le produit : nMats matières, nExc excipients,
+// nEquip équipements/balances, nPA principes actifs.
+function peseeVide (dims = {}) {
+  const nMats = dims.nMats || 7
+  const nExc = dims.nExc || 6
+  const nEquip = dims.nEquip || 2
+  const nPA = dims.nPA || 1
   const mk = (keys) => { const o = {}; keys.forEach(k => { o[k] = '' }); return o }
-  const mkN = (n, keys) => Array.from({ length: n }, () => mk(keys))
+  const mkN = (n, keys) => Array.from({ length: Math.max(1, n) }, () => mk(keys))
   return {
     A: '', B: '', certPA: '',
-    ajustPA: [mk(['nLot', 'titre', 'teneurEau', 'qTheo', 'qPeser', 'faitDV', 'verifDV'])],
+    ajustPA: mkN(nPA, ['nLot', 'titre', 'teneurEau', 'qTheo', 'qPeser', 'faitDV', 'verifDV']),
     ajustExc: [mk(['nLot', 'qTheo', 'qPeser', 'faitDV', 'verifDV'])],
     vSalle: '', vFlux: '', vBalances: '', vMateriels: '', vTicketsPA: '', vTicketsExc: '', vFichesUtil: '',
     condDem: mkN(2, ['etape', 'nSalle', 'heure', 'temp', 'hr', 'dp', 'dvOp', 'dvVerif']),
@@ -23,16 +30,22 @@ function peseeVide () {
     demAq: mk(['date', 'heure', 'visa']),
     verifPrelim: mkN(3, ['oui', 'non', 'dv']),
     operateurs: mkN(5, ['shift', 'poste', 'nom', 'date', 'visa', 'verifDV']),
-    equip: mkN(2, ['fonctVide', 'statutQual', 'etatVitr', 'faitDV', 'verifDV', 'obs']),
-    etal: mkN(2, ['effectue', 'date', 'dvOp', 'dvVerif', 'obs']),
+    equip: mkN(nEquip, ['fonctVide', 'statutQual', 'etatVitr', 'faitDV', 'verifDV', 'obs']),
+    etal: mkN(nEquip, ['effectue', 'date', 'dvOp', 'dvVerif', 'obs']),
     condProc: mkN(6, ['date', 'moment', 'heure', 'temp', 'hr', 'dp', 'nSalle', 'fait', 'verif']),
-    retInterne: mkN(7, ['nLot', 'qte', 'etiq', 'ddr', 'ddp', 'faitDV', 'verifDV']),
-    recExterne: mkN(7, ['nLot', 'contenant', 'etiq', 'qCom', 'qLiv', 'ddr', 'ddp', 'faitDV', 'verifDV']),
-    peseePA: { debH: '', debD: '', finH: '', finD: '', lignes: [mk(['nLot', 'codeBal', 'g', 't', 'n', 'faitDV', 'b', 'verifDV'])] },
-    peseeExc: { debD: '', debH: '', finH: '', finD: '', lignes: mkN(6, ['nLot', 'codeBal', 'g', 't', 'n', 'faitDV', 'b', 'verifDV']) },
-    bilan: { bonCom: '', bonRetInt: '', bonRetFin: '', bonAvarie: '', justif: '', dvResp: '', lignes: mkN(7, ['qLiv', 'qPes', 'qRetInt', 'qRetFin', 'qAvar', 'dvSup']) },
+    retInterne: mkN(nMats, ['nLot', 'qte', 'etiq', 'ddr', 'ddp', 'faitDV', 'verifDV']),
+    recExterne: mkN(nMats, ['nLot', 'contenant', 'etiq', 'qCom', 'qLiv', 'ddr', 'ddp', 'faitDV', 'verifDV']),
+    peseePA: { debH: '', debD: '', finH: '', finD: '', lignes: mkN(nPA, ['nLot', 'codeBal', 'g', 't', 'n', 'faitDV', 'b', 'verifDV']) },
+    peseeExc: { debD: '', debH: '', finH: '', finD: '', lignes: mkN(nExc, ['nLot', 'codeBal', 'g', 't', 'n', 'faitDV', 'b', 'verifDV']) },
+    bilan: { bonCom: '', bonRetInt: '', bonRetFin: '', bonAvarie: '', justif: '', dvResp: '', lignes: mkN(nMats, ['qLiv', 'qPes', 'qRetInt', 'qRetFin', 'qAvar', 'dvSup']) },
     incidents: mkN(3, ['date', 'heureArret', 'nSac', 'motif', 'action', 'dateDem', 'heureDem', 'visa'])
   }
+}
+// Déduit les dimensions de l'étape pesée à partir des données du produit.
+function dimsFor (p) {
+  const mats = p.mats || [], exc = p.exc || [], equip = p.equip || [], formule = p.formule || []
+  const nPA = formule.filter(f => /^MPPA/i.test(f.c || '')).length
+  return { nMats: mats.length, nExc: exc.length, nEquip: equip.length, nPA }
 }
 
 /* ============================================================
@@ -62,26 +75,87 @@ function docVide () {
 const d = reactive(docVide())
 provide('doc', d)
 const dossierId = ref(null)
-const produitsKeys = Object.keys(PRODUITS_REF)
+
+/* ---------------- Catalogue des produits ----------------
+   Fusion : produits intégrés (ROSUSTINE) + produits créés par l'utilisateur
+   (enregistrés dans Supabase, avec cache localStorage pour le hors-ligne). */
+const LS_KEY = 'ldm_produits_ref'
+const produitsDB = ref({})      // depuis Supabase (prioritaire)
+const produitsLocal = ref({})   // cache navigateur (localStorage)
+const produitsTableAbsente = ref(false)
+
+function lireLocal () {
+  try { const s = localStorage.getItem(LS_KEY); if (s) produitsLocal.value = JSON.parse(s) || {} } catch (e) { /* ignore */ }
+}
+function ecrireLocal () {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(produitsLocal.value)) } catch (e) { /* ignore */ }
+}
+
+// Catalogue effectif : intégré < localStorage < base.
+const catalogue = computed(() => ({ ...PRODUITS_REF, ...produitsLocal.value, ...produitsDB.value }))
+const produitsKeys = computed(() => Object.keys(catalogue.value))
+// Noms modifiables/supprimables par l'utilisateur (créés par lui, hors intégrés non surchargés).
+const produitsPerso = computed(() => new Set([...Object.keys(produitsLocal.value), ...Object.keys(produitsDB.value)]))
+
+async function chargerProduits () {
+  try {
+    const r = await supabase.from('produits_ref').select('nom, contenu').order('nom')
+    if (r.error) { produitsTableAbsente.value = /produits_ref|schema cache/i.test(r.error.message || '') || r.error.code === '42P01' || r.error.code === 'PGRST205'; return }
+    produitsTableAbsente.value = false
+    const map = {}
+    for (const row of r.data || []) if (row && row.nom && row.contenu) map[row.nom] = row.contenu
+    produitsDB.value = map
+  } catch (e) { /* hors-ligne : on garde intégré + localStorage */ }
+}
 
 // Charge les données de référence d'un produit dans le dossier (en mutant en place,
 // pour que l'en-tête et les pages réagissent au changement).
 function appliquerProduit (key) {
-  const r = PRODUITS_REF[key]
+  const r = catalogue.value[key]
   if (!r) return
   const c = JSON.parse(JSON.stringify(r))
   d.produit = key
-  Object.assign(d.entete, c.entete)
-  Object.assign(d.amm, c.amm)
-  d.redacteurs = c.redacteurs
-  d.verificateurs = c.verificateurs
-  d.approbateurs = c.approbateurs
-  d.formule = c.formule
-  d.formuleP = c.formuleP
-  d.mats = c.mats
-  d.exc = c.exc
-  d.equip = c.equip
+  Object.assign(d.entete, c.entete || {})
+  Object.assign(d.amm, c.amm || {})
+  d.redacteurs = c.redacteurs || []
+  d.verificateurs = c.verificateurs || []
+  d.approbateurs = c.approbateurs || []
+  d.formule = c.formule || []
+  d.formuleP = c.formuleP || []
+  d.mats = c.mats || []
+  d.exc = c.exc || []
+  d.equip = c.equip || []
+  d.pesee = peseeVide(dimsFor(c))   // redimensionne la pesée au produit
 }
+
+// Enregistre / modifie un produit du catalogue perso → Supabase + localStorage.
+async function sauverProduit (prod) {
+  const nom = ((prod.entete && prod.entete.produit) || '').trim()
+  if (!nom) return { ok: false, err: 'Le nom du produit (en-tête) est obligatoire.' }
+  const contenu = JSON.parse(JSON.stringify(prod))
+  produitsLocal.value = { ...produitsLocal.value, [nom]: contenu }   // cache local d'abord
+  ecrireLocal()
+  try {
+    const payload = { nom, forme: contenu.entete.forme || null, ref_if: contenu.entete.refIf || null, contenu }
+    const r = await supabase.from('produits_ref').upsert(payload, { onConflict: 'nom' }).select('nom').single()
+    if (r.error) {
+      if (/produits_ref|schema cache|column .* does not exist/i.test(r.error.message || '') || r.error.code === '42P01' || r.error.code === 'PGRST205') { produitsTableAbsente.value = true; return { ok: true, local: true } }
+      return { ok: true, local: true, warn: r.error.message }
+    }
+    await chargerProduits()
+    return { ok: true, local: false }
+  } catch (e) { return { ok: true, local: true } }
+}
+
+async function supprimerProduit (nom) {
+  const loc = { ...produitsLocal.value }; delete loc[nom]; produitsLocal.value = loc; ecrireLocal()
+  try { await supabase.from('produits_ref').delete().eq('nom', nom); await chargerProduits() } catch (e) { /* ignore */ }
+  if (d.produit === nom) reset()
+}
+
+// Gestionnaire de produits (panneau)
+const gestionOuvert = ref(false)
+
 // Au démarrage : AUCUN produit sélectionné → l'utilisateur choisit dans la liste.
 
 /* ---------------- Supabase ---------------- */
@@ -110,7 +184,7 @@ function nouveau () {
   // on garde les données du produit (réf), on vide ce qui est propre au lot
   d.lot = docVide().lot
   d.pied = docVide().pied
-  d.pesee = peseeVide()
+  d.pesee = peseeVide(dimsFor(d))
   for (const s of [...d.redacteurs, ...d.verificateurs, ...d.approbateurs]) s.visa = ''
   d.statut = 'Brouillon'
   dossierId.value = null
@@ -165,7 +239,7 @@ const statutCouleur = computed(() => ({
   'Brouillon': '#64748b', 'En cours': '#b45309', 'Terminé': '#0e7490', 'Libéré': '#047857', 'Refusé': '#be123c'
 }[d.statut] || '#64748b'))
 
-onMounted(charger)
+onMounted(() => { lireLocal(); chargerProduits(); charger() })
 </script>
 
 <template>
@@ -188,10 +262,13 @@ onMounted(charger)
       <section class="card prodbar">
         <div class="pb-pick">
           <label class="pb-label" for="prodsel">Produit à fabriquer</label>
-          <select id="prodsel" class="pb-select" v-model="d.produit" @change="appliquerProduit(d.produit)">
-            <option value="" disabled>— Sélectionner un produit —</option>
-            <option v-for="k in produitsKeys" :key="k" :value="k">{{ k }}</option>
-          </select>
+          <div class="pb-pickrow">
+            <select id="prodsel" class="pb-select" v-model="d.produit" @change="appliquerProduit(d.produit)">
+              <option value="" disabled>— Sélectionner un produit —</option>
+              <option v-for="k in produitsKeys" :key="k" :value="k">{{ k }}</option>
+            </select>
+            <button class="btn ghost sm" @click="gestionOuvert = true" title="Ajouter / modifier des produits">⚙ Gérer les produits</button>
+          </div>
         </div>
         <div v-if="d.produit" class="pb-meta">
           <span class="pb-tag">{{ d.entete.refSop }}</span>
@@ -250,11 +327,23 @@ onMounted(charger)
       </section>
     </div>
 
+    <!-- Gestionnaire de produits (modale) -->
+    <GestionProduits
+      v-if="gestionOuvert"
+      :catalogue="catalogue"
+      :perso="produitsPerso"
+      :sauver="sauverProduit"
+      :supprimer="supprimerProduit"
+      :table-absente="produitsTableAbsente"
+      @close="gestionOuvert = false"
+      @selectionner="appliquerProduit" />
+
     <!-- État vide : aucun produit sélectionné -->
     <div v-if="!d.produit" class="empty-state noprint">
       <div class="es-ico">⌄</div>
       <p class="es-title">Sélectionnez un produit dans la liste déroulante ci-dessus</p>
       <p class="es-sub">Les données de référence de l'IF (formule, matières, paramètres, signataires) se chargent automatiquement. Vous n'avez plus qu'à saisir les valeurs réelles du lot, puis imprimer.</p>
+      <button class="btn ghost sm" style="margin-top:14px" @click="gestionOuvert = true">⚙ Votre produit n'est pas dans la liste ? Gérer les produits</button>
     </div>
 
     <!-- ================= DOCUMENT IF ================= -->
@@ -367,6 +456,7 @@ onMounted(charger)
 /* Barre de sélection du produit (liste déroulante) */
 .card.prodbar { padding: 16px 18px; display: flex; align-items: center; gap: 16px 20px; flex-wrap: wrap; border-color: #a5f3fc; background: linear-gradient(0deg,#f8feff,#fff); }
 .pb-pick { display: flex; flex-direction: column; gap: 6px; }
+.pb-pickrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pb-label { font-size: 12px; font-weight: 700; color: #0e7490; text-transform: uppercase; letter-spacing: .4px; }
 .pb-select { font: inherit; font-size: 16px; font-weight: 600; color: #0f172a; padding: 11px 40px 11px 14px; border: 2px solid #06b6d4; border-radius: 10px; background: #fff; cursor: pointer; min-width: 320px;
   appearance: none; -webkit-appearance: none;

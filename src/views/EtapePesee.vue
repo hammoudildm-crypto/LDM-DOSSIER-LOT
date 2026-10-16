@@ -10,6 +10,9 @@ const EXC = computed(() => d.exc || [])
 const FORMULE = computed(() => d.formule || [])
 const FORMULE_P = computed(() => d.formuleP || [])
 const EQUIP = computed(() => d.equip || [])
+// Principes actifs = lignes de formule dont le code commence par MPPA.
+const PA = computed(() => (d.formule || []).filter(f => /^MPPA/i.test(f.c || '')))
+const PA_NOMS = computed(() => PA.value.map(f => f.de).join(', '))
 const VERIF_PRELIM = [
   "Présence de tous les documents de l'instruction de fabrication",
   "L'habillage spécifique / réglementaire du personnel",
@@ -347,8 +350,8 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
       <thead><tr><th>Désignation</th><th>Code interne</th><th>N° de lot interne</th><th>Code balance</th><th>Quantité théorique /lot (kg)</th><th>Quantité pesée /lot (kg)</th><th>Fait par Date &amp; Visa</th><th>Double pesée (kg)</th><th>Vérifié par Date &amp; Visa</th></tr></thead>
       <tbody>
         <tr v-for="(r, i) in d.pesee.peseePA.lignes" :key="i">
-          <td>Rosuvastatine calcium</td><td class="ta-c">MPPA0070</td>
-          <td><input class="cell" v-model="r.nLot" /></td><td><input class="cell" v-model="r.codeBal" /></td><td class="ta-c">7,49</td>
+          <td>{{ PA[i] ? PA[i].de : '' }}</td><td class="ta-c">{{ PA[i] ? PA[i].c : '' }}</td>
+          <td><input class="cell" v-model="r.nLot" /></td><td><input class="cell" v-model="r.codeBal" /></td><td class="ta-c">{{ PA[i] ? PA[i].qt : '' }}</td>
           <td><div class="gtn">G=<input class="cell cinl" v-model="r.g" /></div><div class="gtn">T=<input class="cell cinl" v-model="r.t" /></div><div class="gtn">N=<input class="cell cinl" v-model="r.n" /></div></td>
           <td><input class="cell" v-model="r.faitDV" /></td><td>B=<input class="cell cinl" v-model="r.b" /></td><td><input class="cell" v-model="r.verifDV" /></td>
         </tr>
@@ -356,7 +359,7 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
     </table>
     <table><tbody><tr><td class="k" style="width:50%">Fin de pesée</td><td>Heure : <input class="cell cinl" v-model="d.pesee.peseePA.finH" /></td><td>Date : <input class="cell cinl" v-model="d.pesee.peseePA.finD" /></td></tr></tbody></table>
     <div class="note">G : Globale &nbsp; B : Brute &nbsp; T : Tare &nbsp; N : Net</div>
-    <div class="note hl">NB : Après la pesée de l'API Rosuvastatine calcium, stocker la matière dans un double sac en polyéthylène (PE) avec gel de silice et fermer à l'aide de serre-sacs, puis la placer dans un fût en inox bien fermé.</div>
+    <div class="note hl">NB : Après la pesée de l'API<span v-if="PA_NOMS"> {{ PA_NOMS }}</span>, stocker la matière dans un double sac en polyéthylène (PE) avec gel de silice et fermer à l'aide de serre-sacs, puis la placer dans un fût en inox bien fermé.</div>
   </PageSheet>
 
   <!-- ======================= PAGE 18 — TICKETS PA ======================= -->
@@ -387,11 +390,11 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
     <table>
       <thead><tr><th>Désignation</th><th>Code interne</th><th>N° de lot interne</th><th>Code balance</th><th>Qté théorique /lot (kg)</th><th>Quantité pesée /lot (kg)</th><th>Fait par Date &amp; Visa</th><th>Double pesée (kg)</th><th>Vérifié par Date &amp; Visa</th></tr></thead>
       <tbody>
-        <tr>
-          <td>{{ EXC[5][0] }}</td><td class="ta-c">{{ EXC[5][1] }}</td>
-          <td><input class="cell" v-model="d.pesee.peseeExc.lignes[5].nLot" /></td><td><input class="cell" v-model="d.pesee.peseeExc.lignes[5].codeBal" /></td><td class="ta-c">{{ EXC[5][2] }}</td>
-          <td><div class="gtn">G=<input class="cell cinl" v-model="d.pesee.peseeExc.lignes[5].g" /></div><div class="gtn">T=<input class="cell cinl" v-model="d.pesee.peseeExc.lignes[5].t" /></div><div class="gtn">N=<input class="cell cinl" v-model="d.pesee.peseeExc.lignes[5].n" /></div></td>
-          <td><input class="cell" v-model="d.pesee.peseeExc.lignes[5].faitDV" /></td><td>B=<input class="cell cinl" v-model="d.pesee.peseeExc.lignes[5].b" /></td><td><input class="cell" v-model="d.pesee.peseeExc.lignes[5].verifDV" /></td>
+        <tr v-for="(r, j) in d.pesee.peseeExc.lignes.slice(5)" :key="j">
+          <td>{{ EXC[j + 5] ? EXC[j + 5][0] : '' }}</td><td class="ta-c">{{ EXC[j + 5] ? EXC[j + 5][1] : '' }}</td>
+          <td><input class="cell" v-model="r.nLot" /></td><td><input class="cell" v-model="r.codeBal" /></td><td class="ta-c">{{ EXC[j + 5] ? EXC[j + 5][2] : '' }}</td>
+          <td><div class="gtn">G=<input class="cell cinl" v-model="r.g" /></div><div class="gtn">T=<input class="cell cinl" v-model="r.t" /></div><div class="gtn">N=<input class="cell cinl" v-model="r.n" /></div></td>
+          <td><input class="cell" v-model="r.faitDV" /></td><td>B=<input class="cell cinl" v-model="r.b" /></td><td><input class="cell" v-model="r.verifDV" /></td>
         </tr>
       </tbody>
     </table>
