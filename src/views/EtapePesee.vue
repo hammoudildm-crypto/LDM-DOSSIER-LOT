@@ -1,40 +1,15 @@
 <script setup>
-import { inject } from 'vue'
+import { inject, computed } from 'vue'
 import PageSheet from '../components/PageSheet.vue'
 
 const d = inject('doc')
 
-// ---- Données FIXES (affichage) ----
-const MATS = [
-  ['Rosuvastatine calcium', 'MPPA0070'],
-  ['Cellulose microcristalline PH102', 'MPEX0013'],
-  ['Lactose monohydrate (Flowlac 100)', 'MPEX0158'],
-  ['Crospovidone (POLYPLASDONE XL)', 'MPEX0017'],
-  ['Calcium phosphate Tribasic', 'MPEX0253'],
-  ['Stéarate de magnésium (LIGAMED MF-2-V)', 'MPEX0056'],
-  ["Aquapolish P pink 041.47 (PREMELANGE D'ENROBAGE ROSE)", 'MPEX0255']
-]
-const EXC = [
-  ['Cellulose microcristalline PH102', 'MPEX0013', ''],
-  ['Lactose monohydrate (Flowlac 100)', 'MPEX0158', '64,44'],
-  ['Crospovidone (POLYPLASDONE XL)', 'MPEX0017', '5,40'],
-  ['Calcium phosphate Tribasic', 'MPEX0253', '7,85'],
-  ['Stéarate de magnésium (LIGAMED MF-2-V)', 'MPEX0056', '1,35'],
-  ["Aquapolish P pink 041.47 (PREMELANGE D'ENROBAGE ROSE)", 'MPEX0255', '4,21']
-]
-const FORMULE = [
-  { c: 'MPPA0070', de: 'Rosuvastatine calcium', qn: '10,40', qt: '7,49', qc: 'A =' },
-  { c: 'MPEX0013', de: 'Cellulose microcristalline PH102', qn: '29,82', qt: '21,47', qc: 'B =' },
-  { c: 'MPEX0158', de: 'Lactose monohydrate (Flowlac 100)', qn: '89,50', qt: '64,44', qc: '64,44' },
-  { c: 'MPEX0017', de: 'Crospovidone (POLYPLASDONE XL)', qn: '7,50', qt: '5,40', qc: '5,40' },
-  { c: 'MPEX0253', de: 'Calcium phosphate Tribasic', qn: '10,90', qt: '7,85', qc: '7,85' },
-  { c: 'MPEX0056', de: 'Stéarate de magnésium (LIGAMED MF-2-V)', qn: '1,88', qt: '1,35', qc: '1,35' }
-]
-const FORMULE_P = [
-  { c: 'MPEX0255', de: "Aquapolish P pink 041.47 (PREMELANGE D'ENROBAGE ROSE)", qn: '4,50', qt: '4,21 (2)', qc: '4,21 (2)' },
-  { c: '/', de: 'Eau purifiée', qn: 'Q.S', qt: '25,90 (2)', qc: '25,90 (2)' }
-]
-const EQUIP = [['Balance Mettler Toledo MS 3200LL/01', 'PR042'], ['Balance de pesée Mettler Toledo', 'PR325']]
+// Données FIXES issues du PRODUIT sélectionné (catalogue) — réactives.
+const MATS = computed(() => d.mats || [])
+const EXC = computed(() => d.exc || [])
+const FORMULE = computed(() => d.formule || [])
+const FORMULE_P = computed(() => d.formuleP || [])
+const EQUIP = computed(() => d.equip || [])
 const VERIF_PRELIM = [
   "Présence de tous les documents de l'instruction de fabrication",
   "L'habillage spécifique / réglementaire du personnel",

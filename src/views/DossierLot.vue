@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import PageHeader from '../components/PageHeader.vue'
 import IfHeader from '../components/IfHeader.vue'
 import EtapePesee from './EtapePesee.vue'
+import { PRODUITS_REF } from '../produitsRef.js'
 
 const peutEditer = inject('peutEditer', ref(true))
 
@@ -41,31 +42,12 @@ function peseeVide () {
    ============================================================ */
 function docVide () {
   return {
-    // --- Contenu FIXE de l'IF (produit) — modifiable dans « Paramètres de l'IF » ---
-    entete: {
-      refSop: 'AQ-SOP-108-011', refIf: 'PFLDM103', version: '05', totalPages: 92,
-      produit: 'ROSUSTINE ® 10 mg', dci2: 'Rosuvastatine calcium', forme: 'Comprimé pelliculé',
-      taillePoids: '108.00', uniteDosee: '720 000', uniteVente: '24000'
-    },
-    amm: {
-      dci: 'Rosuvastatine sous forme de Rosuvastatine calcique',
-      numAmm: '24/19.06 M 269/309',
-      titulaire: 'Laboratoires de Diagnostic Maghrebins-LDM',
-      dureeValidite: '36 mois',
-      refDossierTechnique: 'Juillet-2018'
-    },
-    redacteurs: [
-      { nom: 'KHAMADJA Seloua', fonction: 'Superviseur Fabrication', visa: '' }
-    ],
-    verificateurs: [
-      { nom: 'DJELOUAT Sandra', fonction: 'Superviseur MS&T Transfert technologique', visa: '' },
-      { nom: 'BOUDIAF Raid Abderraouf', fonction: 'Spécialiste AQ Validation', visa: '' },
-      { nom: 'ASSABA Dikra', fonction: 'Pharmacienne assistante DT de production, cheffe de projet CMC', visa: '' }
-    ],
-    approbateurs: [
-      { nom: 'BAILI Soumeya', fonction: 'Directrice des affaires réglementaires, market access et pharmacovigilance et DT de production', visa: '' },
-      { nom: 'KORICHE Saber', fonction: 'Manager AQ', visa: '' }
-    ],
+    produit: '',                 // produit sélectionné (clé du catalogue)
+    // --- Données de RÉFÉRENCE du produit (chargées par sélection du produit) ---
+    entete: { refSop: '', refIf: '', version: '', totalPages: 92, produit: '', dci2: '', forme: '', taillePoids: '', uniteDosee: '', uniteVente: '' },
+    amm: { dci: '', numAmm: '', titulaire: '', dureeValidite: '', refDossierTechnique: '' },
+    redacteurs: [], verificateurs: [], approbateurs: [],
+    formule: [], formuleP: [], mats: [], exc: [], equip: [],
     // --- Contenu PROPRE AU LOT (rempli à chaque fabrication) ---
     lot: {
       numeroLotInterne: '', ddf: '', ddp: '', ofN: '',
@@ -80,6 +62,27 @@ function docVide () {
 const d = reactive(docVide())
 provide('doc', d)
 const dossierId = ref(null)
+const produitsKeys = Object.keys(PRODUITS_REF)
+
+// Charge les données de référence d'un produit dans le dossier (en mutant en place,
+// pour que l'en-tête et les pages réagissent au changement).
+function appliquerProduit (key) {
+  const r = PRODUITS_REF[key]
+  if (!r) return
+  const c = JSON.parse(JSON.stringify(r))
+  d.produit = key
+  Object.assign(d.entete, c.entete)
+  Object.assign(d.amm, c.amm)
+  d.redacteurs = c.redacteurs
+  d.verificateurs = c.verificateurs
+  d.approbateurs = c.approbateurs
+  d.formule = c.formule
+  d.formuleP = c.formuleP
+  d.mats = c.mats
+  d.exc = c.exc
+  d.equip = c.equip
+}
+// Au démarrage : AUCUN produit sélectionné → l'utilisateur choisit dans la liste.
 
 /* ---------------- Supabase ---------------- */
 const liste = ref([])
@@ -98,16 +101,20 @@ async function chargerListe () {
   liste.value = r.data || []
 }
 
-function reset () { Object.assign(d, docVide()); dossierId.value = null; message.value = '' }
+function reset () {
+  Object.assign(d, docVide())   // tout vide → retour à la sélection du produit
+  dossierId.value = null; message.value = ''
+}
 function nouveau () {
-  if (!confirm('Nouveau dossier de lot ? Les saisies non enregistrées seront perdues (le contenu fixe de l\'IF est conservé).')) return
-  // on garde le contenu fixe (entete, amm, signataires), on vide le lot
+  if (!confirm('Nouveau dossier de lot ? Les saisies non enregistrées seront perdues (les données du produit sont conservées).')) return
+  // on garde les données du produit (réf), on vide ce qui est propre au lot
   d.lot = docVide().lot
   d.pied = docVide().pied
+  d.pesee = peseeVide()
   for (const s of [...d.redacteurs, ...d.verificateurs, ...d.approbateurs]) s.visa = ''
   d.statut = 'Brouillon'
   dossierId.value = null
-  message.value = 'Nouveau dossier — saisis le N° de lot et les visas.'
+  message.value = 'Nouveau dossier — saisis le N° de lot et les valeurs réelles.'
 }
 
 async function enregistrer () {
@@ -177,20 +184,39 @@ onMounted(charger)
       <p v-if="message" class="ok-msg">{{ message }}</p>
       <p v-if="tableAbsente" class="warn">⚠️ La table <code>dossiers_lot</code> n'existe pas encore dans Supabase. Le formulaire fonctionne et s'imprime ; l'enregistrement nécessite d'exécuter le script SQL fourni (une fois).</p>
 
-      <section class="card slim">
-        <label v-if="liste.length" class="fld inline">Recharger un dossier
+      <!-- Sélection du produit — liste déroulante -->
+      <section class="card prodbar">
+        <div class="pb-pick">
+          <label class="pb-label" for="prodsel">Produit à fabriquer</label>
+          <select id="prodsel" class="pb-select" v-model="d.produit" @change="appliquerProduit(d.produit)">
+            <option value="" disabled>— Sélectionner un produit —</option>
+            <option v-for="k in produitsKeys" :key="k" :value="k">{{ k }}</option>
+          </select>
+        </div>
+        <div v-if="d.produit" class="pb-meta">
+          <span class="pb-tag">{{ d.entete.refSop }}</span>
+          <span class="pb-tag">{{ d.entete.refIf }} · v{{ d.entete.version }}</span>
+          <span class="pb-tag">{{ d.entete.forme }}</span>
+          <span class="pb-tag">Lot : {{ d.entete.taillePoids }} kg · {{ d.entete.uniteDosee }} unités</span>
+        </div>
+        <label v-if="liste.length" class="pb-reload">Recharger un dossier
           <select @change="chargerDossier($event.target.value); $event.target.value = ''">
             <option value="">— choisir —</option>
             <option v-for="x in liste" :key="x.id" :value="x.id">{{ x.numero_lot }} · {{ x.code_pf || '—' }} · {{ x.statut }}</option>
           </select>
         </label>
-        <select v-model="d.statut" class="statut-sel"><option>Brouillon</option><option>En cours</option><option>Terminé</option><option>Libéré</option><option>Refusé</option></select>
-        <button class="btn ghost sm" @click="paramsOuverts = !paramsOuverts">{{ paramsOuverts ? 'Masquer' : 'Paramètres de l\'IF (produit, AMM, signataires)' }}</button>
+      </section>
+
+      <section v-if="d.produit" class="card slim">
+        <label class="fld inline">Statut
+          <select v-model="d.statut" class="statut-sel"><option>Brouillon</option><option>En cours</option><option>Terminé</option><option>Libéré</option><option>Refusé</option></select>
+        </label>
+        <button class="btn ghost sm" @click="paramsOuverts = !paramsOuverts">{{ paramsOuverts ? 'Masquer' : 'Paramètres de l\'IF (AMM, signataires)' }}</button>
         <button v-if="dossierId" class="btn ghost sm danger" @click="supprimer">Supprimer</button>
       </section>
 
       <!-- Paramètres FIXES de l'IF (modifiable une fois) -->
-      <section v-if="paramsOuverts" class="card params">
+      <section v-if="paramsOuverts && d.produit" class="card params">
         <h3>En-tête IF</h3>
         <div class="grid3">
           <label class="fld">Produit<input v-model="d.entete.produit" /></label>
@@ -224,7 +250,15 @@ onMounted(charger)
       </section>
     </div>
 
+    <!-- État vide : aucun produit sélectionné -->
+    <div v-if="!d.produit" class="empty-state noprint">
+      <div class="es-ico">⌄</div>
+      <p class="es-title">Sélectionnez un produit dans la liste déroulante ci-dessus</p>
+      <p class="es-sub">Les données de référence de l'IF (formule, matières, paramètres, signataires) se chargent automatiquement. Vous n'avez plus qu'à saisir les valeurs réelles du lot, puis imprimer.</p>
+    </div>
+
     <!-- ================= DOCUMENT IF ================= -->
+    <template v-if="d.produit">
     <!-- PAGE 1 — Visas d'approbation (FRM1) -->
     <div class="if-sheet">
       <IfHeader frm="FRM1" :page="1" />
@@ -316,6 +350,7 @@ onMounted(charger)
 
     <!-- ========== ÉTAPE PESÉE (pages 3 à 24) ========== -->
     <EtapePesee />
+    </template>
   </div>
 </template>
 
@@ -329,6 +364,25 @@ onMounted(charger)
 .warn code { background: #fef3c7; padding: 1px 5px; border-radius: 4px; }
 .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
 .card.slim { padding: 12px 16px; display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+/* Barre de sélection du produit (liste déroulante) */
+.card.prodbar { padding: 16px 18px; display: flex; align-items: center; gap: 16px 20px; flex-wrap: wrap; border-color: #a5f3fc; background: linear-gradient(0deg,#f8feff,#fff); }
+.pb-pick { display: flex; flex-direction: column; gap: 6px; }
+.pb-label { font-size: 12px; font-weight: 700; color: #0e7490; text-transform: uppercase; letter-spacing: .4px; }
+.pb-select { font: inherit; font-size: 16px; font-weight: 600; color: #0f172a; padding: 11px 40px 11px 14px; border: 2px solid #06b6d4; border-radius: 10px; background: #fff; cursor: pointer; min-width: 320px;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%230891b2' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center; }
+.pb-select:focus { outline: none; border-color: #0891b2; box-shadow: 0 0 0 3px #cffafe; }
+.pb-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.pb-tag { font-size: 12px; font-weight: 600; color: #155e75; background: #ecfeff; border: 1px solid #a5f3fc; padding: 4px 9px; border-radius: 999px; }
+.pb-reload { margin-left: auto; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #475569; }
+.pb-reload select { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; }
+/* État vide */
+.empty-state { text-align: center; padding: 48px 24px; background: #fff; border: 1px dashed #cbd5e1; border-radius: 14px; }
+.empty-state .es-ico { font-size: 34px; line-height: 1; color: #06b6d4; font-weight: 800; animation: bob 1.6s ease-in-out infinite; }
+.empty-state .es-title { font-size: 16px; font-weight: 700; color: #0f172a; margin: 10px 0 6px; }
+.empty-state .es-sub { font-size: 13px; color: #64748b; max-width: 560px; margin: 0 auto; line-height: 1.5; }
+@keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
 .card.params { padding: 16px 18px; }
 .card.params h3 { margin: 14px 0 8px; font-size: 13px; color: #0e7490; }
 .card.params h3:first-child { margin-top: 0; }

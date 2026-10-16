@@ -8,7 +8,6 @@ defineProps({
   etape: { type: String, default: '' }           // bandeau d'étape (ex. « PESÉE »)
 })
 const d = inject('doc')
-const e = d.entete
 </script>
 
 <template>
@@ -18,29 +17,29 @@ const e = d.entete
         <tr>
           <td class="logo" rowspan="2"><div class="ldm">LDM</div><div class="grp">GROUPE</div></td>
           <td class="titre" rowspan="2">INSTRUCTION DE<br>FABRICATION</td>
-          <td class="ref">Référence :&nbsp;<b>{{ e.refSop }}/{{ frm }}</b></td>
+          <td class="ref">Référence :&nbsp;<b>{{ d.entete.refSop }}/{{ frm }}</b></td>
         </tr>
         <tr>
           <td class="ref">
-            <div class="rr"><span>Référence IF :&nbsp;<b>{{ e.refIf }}</b></span><span>Version :&nbsp;<b>{{ e.version }}</b></span></div>
-            <div class="rr"><span>Page {{ page }} sur {{ e.totalPages }}</span><span>Sous Page :&nbsp;……/………</span></div>
+            <div class="rr"><span>Référence IF :&nbsp;<b>{{ d.entete.refIf }}</b></span><span>Version :&nbsp;<b>{{ d.entete.version }}</b></span></div>
+            <div class="rr"><span>Page {{ page }} sur {{ d.entete.totalPages }}</span><span>Sous Page :&nbsp;……/………</span></div>
           </td>
         </tr>
       </tbody>
     </table>
 
     <div class="prod">
-      <div class="p1">{{ e.produit }} / {{ e.dci2 }}</div>
-      <div class="p2">{{ e.forme }}</div>
+      <div class="p1">{{ d.entete.produit }} / {{ d.entete.dci2 }}</div>
+      <div class="p2">{{ d.entete.forme }}</div>
     </div>
 
     <table class="ifh-taille">
       <tbody>
         <tr>
           <td class="lbl">Taille de lot</td>
-          <td>Poids (kg) :&nbsp;<b>{{ e.taillePoids }}</b></td>
-          <td>Unité dosée (comprimé) :&nbsp;<b>{{ e.uniteDosee }}</b></td>
-          <td>Unité vente (boîte) :&nbsp;<b>{{ e.uniteVente }}</b></td>
+          <td>Poids (kg) :&nbsp;<b>{{ d.entete.taillePoids }}</b></td>
+          <td>Unité dosée (comprimé) :&nbsp;<b>{{ d.entete.uniteDosee }}</b></td>
+          <td>Unité vente (boîte) :&nbsp;<b>{{ d.entete.uniteVente }}</b></td>
         </tr>
         <tr v-if="showLot" class="lotrow">
           <td class="lbl">N° de lot</td>
