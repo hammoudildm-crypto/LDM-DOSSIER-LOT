@@ -33,7 +33,9 @@ function dossierVide () {
     deviations: [],
     revue: { conformeProcede: false, conformeIpc: false, conformeRendement: false, resultatsCq: '', decision: '', commentaire: '' },
     visas: { fabrication: { nom: '', date: '' }, verification: { nom: '', date: '' }, aq: { nom: '', date: '' }, liberation: { nom: '', date: '' } },
-    statut: 'Brouillon'
+    statut: 'Brouillon',
+    type: 'dossier',   // 'dossier' (lot réel) | 'modele' (dossier type pré-rempli)
+    nom: ''            // nom du modèle (mode Modèles)
   }
 }
 const d = reactive(dossierVide())
@@ -45,6 +47,8 @@ const liste = ref([])                  // dossiers enregistrés (pour recharger)
 const erreur = ref('')
 const message = ref('')
 const tableAbsente = ref(false)
+const mode = ref('dossiers')           // 'dossiers' (exécution) | 'modeles' (dossiers types)
+const modeles = ref([])                // modèles enregistrés (dossiers types)
 
 // Le formulaire s'affiche immédiatement ; les données (produits, dossiers)
 // se chargent en arrière-plan et ne bloquent jamais la saisie.
@@ -57,11 +61,13 @@ async function charger () {
 }
 async function chargerListe () {
   const r = await supabase.from('dossiers_lot')
-    .select('id, numero_lot, code_pf, forme, statut, date_fab, updated_at')
-    .order('updated_at', { ascending: false }).limit(50)
-  if (r.error) { tableAbsente.value = /dossiers_lot/.test(r.error.message || '') || r.error.code === '42P01'; liste.value = []; return }
+    .select('id, numero_lot, nom, code_pf, forme, statut, type, date_fab, updated_at')
+    .order('updated_at', { ascending: false }).limit(100)
+  if (r.error) { tableAbsente.value = /dossiers_lot/.test(r.error.message || '') || r.error.code === '42P01'; liste.value = []; modeles.value = []; return }
   tableAbsente.value = false
-  liste.value = r.data || []
+  const rows = r.data || []
+  liste.value = rows.filter(x => x.type !== 'modele')
+  modeles.value = rows.filter(x => x.type === 'modele')
 }
 
 /* ---------------- Produit ---------------- */
@@ -122,32 +128,45 @@ function reset () {
   message.value = ''
 }
 function nouveau () {
-  if (!confirm('Créer un nouveau dossier ? Les saisies non enregistrées seront perdues.')) return
+  const quoi = mode.value === 'modeles' ? 'modèle' : 'dossier'
+  if (!confirm('Créer un nouveau ' + quoi + ' ? Les saisies non enregistrées seront perdues.')) return
   reset()
+  d.type = mode.value === 'modeles' ? 'modele' : 'dossier'
+}
+function changerMode (m) {
+  if (m === mode.value) return
+  if (dossierId.value || d.entete.numeroLot || d.nom) { if (!confirm('Changer de mode ? Les saisies non enregistrées seront perdues.')) return }
+  mode.value = m
+  reset()
+  d.type = m === 'modeles' ? 'modele' : 'dossier'
 }
 
 async function enregistrer () {
   erreur.value = ''; message.value = ''
-  if (!d.entete.numeroLot) { erreur.value = 'Renseigne au moins le N° de lot avant d\'enregistrer.'; return }
+  const estModele = d.type === 'modele'
+  if (estModele && !d.nom) { erreur.value = 'Donne un nom au modèle avant d\'enregistrer.'; return }
+  if (!estModele && !d.entete.numeroLot) { erreur.value = 'Renseigne au moins le N° de lot avant d\'enregistrer.'; return }
   const payload = {
-    numero_lot: d.entete.numeroLot,
+    numero_lot: estModele ? null : d.entete.numeroLot,
+    nom: estModele ? d.nom : null,
     code_pf: d.entete.codePf || null,
-    numero_of: d.entete.numeroOf || null,
+    numero_of: estModele ? null : (d.entete.numeroOf || null),
     forme: 'Comprimés',
-    statut: d.statut,
-    date_fab: d.entete.dateDebut || null,
+    type: d.type || 'dossier',
+    statut: estModele ? null : d.statut,
+    date_fab: estModele ? null : (d.entete.dateDebut || null),
     contenu: JSON.parse(JSON.stringify(d))
   }
   let r
   if (dossierId.value) r = await supabase.from('dossiers_lot').update(payload).eq('id', dossierId.value).select('id').single()
   else r = await supabase.from('dossiers_lot').insert(payload).select('id').single()
   if (r.error) {
-    if (/dossiers_lot/.test(r.error.message || '') || r.error.code === '42P01') { tableAbsente.value = true; erreur.value = 'La table « dossiers_lot » n\'existe pas encore — exécute le script SQL fourni, puis réessaie.' }
+    if (/dossiers_lot|schema cache|column .* does not exist/i.test(r.error.message || '') || r.error.code === '42P01' || r.error.code === 'PGRST205') { tableAbsente.value = true; erreur.value = 'La table « dossiers_lot » (version avec modèles) n\'existe pas encore ou est en ancienne version — exécute le script SQL fourni, puis réessaie.' }
     else erreur.value = 'Erreur d\'enregistrement : ' + r.error.message
     return
   }
   dossierId.value = r.data.id
-  message.value = 'Dossier enregistré ✓'
+  message.value = estModele ? 'Modèle enregistré ✓' : 'Dossier enregistré ✓'
   await chargerListe()
 }
 
@@ -159,7 +178,40 @@ async function chargerDossier (id) {
   const c = r.data.contenu || {}
   Object.assign(d, dossierVide(), c)
   dossierId.value = r.data.id
-  message.value = 'Dossier « ' + (d.entete.numeroLot || id) + ' » chargé.'
+  mode.value = (d.type === 'modele') ? 'modeles' : 'dossiers'
+  message.value = (d.type === 'modele' ? 'Modèle « ' + (d.nom || id) : 'Dossier « ' + (d.entete.numeroLot || id)) + ' » chargé.'
+}
+
+// Vide les champs propres au lot : on garde la formule, les équipements et les paramètres cibles du modèle
+function viderActuels (x) {
+  x.type = 'dossier'; x.nom = ''; x.statut = 'Brouillon'
+  x.entete.numeroLot = ''; x.entete.numeroOf = ''; x.entete.dateDebut = ''; x.entete.dateFin = ''; x.entete.peremption = ''
+  for (const m of (x.matieres || [])) { m.lotMp = ''; m.qteReel = ''; m.visa = '' }
+  for (const q of (x.equipements || [])) { q.nettoyage = false; q.visa = '' }
+  x.conditions = []
+  for (const k in (x.etapes || {})) { const s = x.etapes[k]; if ('debut' in s) s.debut = ''; if ('fin' in s) s.fin = ''; if ('op' in s) s.op = ''; if ('verif' in s) s.verif = ''; if ('obs' in s) s.obs = '' }
+  if (x.etapes && x.etapes.sechage) x.etapes.sechage.lodResultat = ''
+  if (x.etapes && x.etapes.pelliculage) x.etapes.pelliculage.priseMasseReel = ''
+  x.ipc = []
+  x.rendements.granuleReel = ''; x.rendements.comprimesReel = ''; x.rendements.pellicReel = ''
+  x.reconciliation.produits = ''; x.reconciliation.echantillons = ''; x.reconciliation.rebuts = ''; x.reconciliation.detruits = ''
+  x.deviations = []
+  x.revue = { conformeProcede: false, conformeIpc: false, conformeRendement: false, resultatsCq: '', decision: '', commentaire: '' }
+  x.visas = { fabrication: { nom: '', date: '' }, verification: { nom: '', date: '' }, aq: { nom: '', date: '' }, liberation: { nom: '', date: '' } }
+  return x
+}
+async function depuisModele (id) {
+  if (!id) return
+  erreur.value = ''
+  const r = await supabase.from('dossiers_lot').select('*').eq('id', id).single()
+  if (r.error) { erreur.value = 'Impossible de charger le modèle : ' + r.error.message; return }
+  reset()
+  const base = Object.assign(dossierVide(), r.data.contenu || {})
+  viderActuels(base)
+  Object.assign(d, base)
+  dossierId.value = null         // c'est un NOUVEAU dossier, pas encore enregistré
+  mode.value = 'dossiers'
+  message.value = 'Nouveau dossier pré-rempli depuis le modèle « ' + (r.data.nom || '') + ' ». Saisis le N° de lot et les valeurs réelles.'
 }
 
 async function supprimer () {
@@ -295,27 +347,53 @@ onMounted(charger)
 
 <template>
   <div class="dl-page">
-    <PageHeader title="Dossier de lot — Comprimés"
-      subtitle="Dossier de lot électronique (eBMR) — forme sèche comprimés. Saisie, enregistrement et impression.">
-      <span class="statut" :style="{ background: statutCouleur }">{{ d.statut }}</span>
+    <div class="mode-tabs">
+      <button type="button" :class="{ on: mode === 'dossiers' }" @click="changerMode('dossiers')">Dossiers de lot</button>
+      <button type="button" :class="{ on: mode === 'modeles' }" @click="changerMode('modeles')">Modèles (dossiers types)</button>
+    </div>
+
+    <PageHeader :title="(mode === 'modeles' ? 'Modèle de dossier' : 'Dossier de lot') + ' — Comprimés'"
+      :subtitle="mode === 'modeles' ? 'Dossier type d\'un produit : formule, équipements et paramètres cibles — réutilisé à chaque lot.' : 'Dossier de lot électronique (eBMR) — forme sèche comprimés. Saisie, enregistrement et impression.'">
+      <span v-if="mode === 'dossiers'" class="statut" :style="{ background: statutCouleur }">{{ d.statut }}</span>
       <button class="btn ghost sm" @click="nouveau">Nouveau</button>
-      <button class="btn sm" :disabled="!peutEditer" @click="enregistrer">Enregistrer</button>
+      <button class="btn sm" :disabled="!peutEditer" @click="enregistrer">{{ mode === 'modeles' ? 'Enregistrer le modèle' : 'Enregistrer' }}</button>
       <button class="btn ghost sm" @click="imprimer">Imprimer</button>
     </PageHeader>
 
     <p v-if="erreur" class="alert">{{ erreur }}</p>
     <p v-if="message" class="ok-msg">{{ message }}</p>
-    <p v-if="tableAbsente" class="warn">⚠️ La table <code>dossiers_lot</code> n'existe pas encore dans Supabase. Le formulaire fonctionne et s'imprime, mais l'enregistrement en base nécessite d'exécuter le script SQL fourni (une fois).</p>
+    <p v-if="tableAbsente" class="warn">⚠️ La table <code>dossiers_lot</code> (version avec modèles) n'existe pas encore dans Supabase. Le formulaire fonctionne et s'imprime, mais l'enregistrement nécessite d'exécuter le script SQL fourni (une fois).</p>
+    <p v-if="mode === 'modeles'" class="info">Mode <b>Modèle</b> : renseigne la <b>formule</b> (quantités théoriques), les <b>équipements</b> standard et les <b>paramètres cibles</b> des étapes. Les champs propres au lot (N° de lot, quantités réelles, visas, contrôles) restent vides — ils se rempliront à chaque fabrication.</p>
 
-    <!-- Barre : recharger un dossier -->
-    <section class="card slim" v-if="liste.length">
-      <label class="fld inline">Recharger un dossier enregistré
-        <select @change="chargerDossier($event.target.value)">
-          <option value="">— choisir —</option>
-          <option v-for="x in liste" :key="x.id" :value="x.id">{{ x.numero_lot }} · {{ x.code_pf || '—' }} · {{ x.statut }}</option>
-        </select>
-      </label>
-      <button v-if="dossierId" class="btn ghost sm danger" @click="supprimer">Supprimer ce dossier</button>
+    <!-- Barre de reprise / démarrage -->
+    <section class="card slim">
+      <template v-if="mode === 'dossiers'">
+        <label v-if="modeles.length" class="fld inline">Démarrer depuis un modèle
+          <select @change="depuisModele($event.target.value); $event.target.value = ''">
+            <option value="">— choisir un modèle —</option>
+            <option v-for="m in modeles" :key="m.id" :value="m.id">{{ m.nom }} · {{ m.code_pf || '—' }}</option>
+          </select>
+        </label>
+        <label v-if="liste.length" class="fld inline">Recharger un dossier
+          <select @change="chargerDossier($event.target.value); $event.target.value = ''">
+            <option value="">— choisir —</option>
+            <option v-for="x in liste" :key="x.id" :value="x.id">{{ x.numero_lot }} · {{ x.code_pf || '—' }} · {{ x.statut }}</option>
+          </select>
+        </label>
+        <span v-if="!modeles.length && !liste.length" class="muted">Astuce : crée d'abord un <b>modèle</b> (onglet « Modèles ») pour pré-remplir tes lots.</span>
+      </template>
+      <template v-else>
+        <label class="fld inline">Nom du modèle
+          <input v-model="d.nom" type="text" class="nom-modele" placeholder="ex. ATOSTINE 10 mg — comprimés" />
+        </label>
+        <label v-if="modeles.length" class="fld inline">Recharger un modèle
+          <select @change="chargerDossier($event.target.value); $event.target.value = ''">
+            <option value="">— choisir —</option>
+            <option v-for="m in modeles" :key="m.id" :value="m.id">{{ m.nom }} · {{ m.code_pf || '—' }}</option>
+          </select>
+        </label>
+      </template>
+      <button v-if="dossierId" class="btn ghost sm danger" @click="supprimer">Supprimer</button>
     </section>
 
       <!-- 1. Identification -->
@@ -333,19 +411,19 @@ onMounted(charger)
             <label class="fld">Code PF<input v-model="d.entete.codePf" type="text" /></label>
             <label class="fld">Désignation<input v-model="d.entete.designation" type="text" /></label>
             <label class="fld">Dosage<input v-model="d.entete.dosage" type="text" placeholder="ex. 500 mg" /></label>
-            <label class="fld">N° de lot<input v-model="d.entete.numeroLot" type="text" /></label>
-            <label class="fld">N° OF<input v-model="d.entete.numeroOf" type="text" /></label>
+            <label v-if="mode === 'dossiers'" class="fld">N° de lot<input v-model="d.entete.numeroLot" type="text" /></label>
+            <label v-if="mode === 'dossiers'" class="fld">N° OF<input v-model="d.entete.numeroOf" type="text" /></label>
             <label class="fld">Taille du lot
               <div class="row">
                 <input v-model="d.entete.tailleLot" type="text" />
                 <select v-model="d.entete.uniteTaille" class="u"><option>comprimés</option><option>boîtes</option><option>kg</option></select>
               </div>
             </label>
-            <label class="fld">Début fabrication<input v-model="d.entete.dateDebut" type="date" /></label>
-            <label class="fld">Fin fabrication<input v-model="d.entete.dateFin" type="date" /></label>
-            <label class="fld">Péremption<input v-model="d.entete.peremption" type="date" /></label>
+            <label v-if="mode === 'dossiers'" class="fld">Début fabrication<input v-model="d.entete.dateDebut" type="date" /></label>
+            <label v-if="mode === 'dossiers'" class="fld">Fin fabrication<input v-model="d.entete.dateFin" type="date" /></label>
+            <label v-if="mode === 'dossiers'" class="fld">Péremption<input v-model="d.entete.peremption" type="date" /></label>
             <label class="fld">Version dossier<input v-model="d.entete.version" type="text" /></label>
-            <label class="fld">Statut
+            <label v-if="mode === 'dossiers'" class="fld">Statut
               <select v-model="d.statut"><option>Brouillon</option><option>En cours</option><option>Terminé</option><option>Libéré</option><option>Refusé</option></select>
             </label>
           </div>
@@ -533,7 +611,7 @@ onMounted(charger)
       </section>
 
       <!-- 6. IPC -->
-      <section class="card">
+      <section class="card" v-if="mode === 'dossiers'">
         <div class="card-h" @click="toggle('ipc')"><h2>6 · Contrôles en cours (compression)</h2><span class="chev">{{ sec.ipc ? '▾' : '▸' }}</span></div>
         <div v-show="sec.ipc" class="card-b">
           <div class="tbl-scroll">
@@ -595,7 +673,7 @@ onMounted(charger)
       </section>
 
       <!-- 8. Déviations -->
-      <section class="card">
+      <section class="card" v-if="mode === 'dossiers'">
         <div class="card-h" @click="toggle('dev')"><h2>8 · Déviations / Événements</h2><span class="chev">{{ sec.dev ? '▾' : '▸' }}</span></div>
         <div v-show="sec.dev" class="card-b">
           <div class="tbl-scroll">
@@ -617,7 +695,7 @@ onMounted(charger)
       </section>
 
       <!-- 9. Revue & Libération -->
-      <section class="card">
+      <section class="card" v-if="mode === 'dossiers'">
         <div class="card-h" @click="toggle('revue')"><h2>9 · Revue & Libération</h2><span class="chev">{{ sec.revue ? '▾' : '▸' }}</span></div>
         <div v-show="sec.revue" class="card-b">
           <div class="checks">
@@ -651,6 +729,12 @@ onMounted(charger)
 
 <style scoped>
 .dl-page { color: #1b2733; }
+.mode-tabs { display: inline-flex; gap: 0; border: 1px solid #cbd5e1; border-radius: 10px; overflow: hidden; background: #f1f5f9; margin-bottom: 12px; }
+.mode-tabs button { font: inherit; font-size: 13px; font-weight: 600; padding: 8px 16px; border: 0; border-left: 1px solid #e2e8f0; background: transparent; color: #64748b; cursor: pointer; }
+.mode-tabs button:first-child { border-left: 0; }
+.mode-tabs button.on { background: #0891b2; color: #fff; }
+.info { background: #ecfeff; border: 1px solid #a5f3fc; color: #155e75; padding: 10px 14px; border-radius: 8px; margin: 0 0 14px; font-size: 13px; }
+.nom-modele { min-width: 260px; }
 .statut { color: #fff; font-size: 12px; font-weight: 700; padding: 5px 11px; border-radius: 999px; }
 .alert { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 10px 14px; border-radius: 8px; margin: 0 0 12px; font-size: 13px; }
 .ok-msg { background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; padding: 10px 14px; border-radius: 8px; margin: 0 0 12px; font-size: 13px; }
