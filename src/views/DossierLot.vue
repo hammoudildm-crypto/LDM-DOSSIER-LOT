@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import PageHeader from '../components/PageHeader.vue'
 import IfHeader from '../components/IfHeader.vue'
 import EtapePesee from './EtapePesee.vue'
+import ControleCritique from './ControleCritique.vue'
 import GestionProduits from '../components/GestionProduits.vue'
 import { PRODUITS_REF } from '../produitsRef.js'
 
@@ -69,6 +70,8 @@ function docVide () {
     },
     pied: { redacteur: '', verificateur: '', approbateur: '' },
     pesee: peseeVide(),
+    // --- Exécution eBMR (contrôle des paramètres critiques) ---
+    execution: { operateur: { nom: '', matricule: '' }, tolPeseePct: null, tolBilanPct: null, deviations: {}, signatures: {}, audit: [] },
     statut: 'Brouillon'
   }
 }
@@ -155,6 +158,8 @@ async function supprimerProduit (nom) {
 
 // Gestionnaire de produits (panneau)
 const gestionOuvert = ref(false)
+// Vue active : 'ebmr' (saisie guidée contrôlée) | 'doc' (dossier imprimable)
+const vue = ref('ebmr')
 
 // Au démarrage : AUCUN produit sélectionné → l'utilisateur choisit dans la liste.
 
@@ -185,6 +190,9 @@ function nouveau () {
   d.lot = docVide().lot
   d.pied = docVide().pied
   d.pesee = peseeVide(dimsFor(d))
+  const op = d.execution.operateur           // on conserve l'opérateur courant
+  d.execution = docVide().execution
+  d.execution.operateur = op
   for (const s of [...d.redacteurs, ...d.verificateurs, ...d.approbateurs]) s.visa = ''
   d.statut = 'Brouillon'
   dossierId.value = null
@@ -346,8 +354,18 @@ onMounted(() => { lireLocal(); chargerProduits(); charger() })
       <button class="btn ghost sm" style="margin-top:14px" @click="gestionOuvert = true">⚙ Votre produit n'est pas dans la liste ? Gérer les produits</button>
     </div>
 
-    <!-- ================= DOCUMENT IF ================= -->
-    <template v-if="d.produit">
+    <!-- Bascule de vue (écran uniquement) -->
+    <div v-if="d.produit" class="noprint vtoggle">
+      <button class="vt" :class="{ on: vue === 'ebmr' }" @click="vue = 'ebmr'">① Saisie guidée · contrôle eBMR</button>
+      <button class="vt" :class="{ on: vue === 'doc' }" @click="vue = 'doc'">② Dossier imprimable</button>
+      <span class="vt-note">Mêmes données partagées — « Imprimer » génère le dossier fidèle.</span>
+    </div>
+
+    <!-- Vue 1 : saisie guidée contrôlée (paramètres critiques) -->
+    <ControleCritique v-if="d.produit && vue === 'ebmr'" class="noprint" />
+
+    <!-- ================= DOCUMENT IF (vue 2 + impression) ================= -->
+    <div v-if="d.produit" class="doc-wrap" :class="{ 'screen-hide': vue === 'ebmr' }">
     <!-- PAGE 1 — Visas d'approbation (FRM1) -->
     <div class="if-sheet">
       <IfHeader frm="FRM1" :page="1" />
@@ -439,7 +457,7 @@ onMounted(() => { lireLocal(); chargerProduits(); charger() })
 
     <!-- ========== ÉTAPE PESÉE (pages 3 à 24) ========== -->
     <EtapePesee />
-    </template>
+    </div>
   </div>
 </template>
 
@@ -467,6 +485,13 @@ onMounted(() => { lireLocal(); chargerProduits(); charger() })
 .pb-tag { font-size: 12px; font-weight: 600; color: #155e75; background: #ecfeff; border: 1px solid #a5f3fc; padding: 4px 9px; border-radius: 999px; }
 .pb-reload { margin-left: auto; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #475569; }
 .pb-reload select { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; }
+/* Bascule de vue */
+.vtoggle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.vt { font: inherit; font-size: 13px; font-weight: 600; color: #475569; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.vt.on { background: #0891b2; color: #fff; border-color: #0891b2; }
+.vt-note { font-size: 11.5px; color: #94a3b8; }
+.screen-hide { display: none; }
+@media print { .screen-hide { display: block !important; } }
 /* État vide */
 .empty-state { text-align: center; padding: 48px 24px; background: #fff; border: 1px dashed #cbd5e1; border-radius: 14px; }
 .empty-state .es-ico { font-size: 34px; line-height: 1; color: #06b6d4; font-weight: 800; animation: bob 1.6s ease-in-out infinite; }
