@@ -13,6 +13,26 @@ const EQUIP = computed(() => d.equip || [])
 // Principes actifs = lignes de formule dont le code commence par MPPA.
 const PA = computed(() => (d.formule || []).filter(f => /^MPPA/i.test(f.c || '')))
 const PA_NOMS = computed(() => PA.value.map(f => f.de).join(', '))
+
+// Extrait le premier nombre d'une valeur (gère « 4,21 (2) », « Q.S » → null).
+const toN = (v) => { const m = String(v == null ? '' : v).replace(',', '.').match(/-?\d+(\.\d+)?/); return m ? Number(m[0]) : null }
+// Somme d'une colonne, uniquement pour les lignes dont la quantité/unité (qn) est numérique
+// (exclut l'eau purifiée « Q.S » du poids et de la taille de lot).
+const sumCol = (rows, col) => (rows || []).reduce((a, r) => toN(r.qn) !== null ? a + (toN(r[col]) || 0) : a, 0)
+// Totaux CALCULÉS d'après la formule du produit (varient d'un produit à l'autre).
+const totaux = computed(() => {
+  const nuMg = sumCol(d.formule, 'qn')
+  const nuKg = sumCol(d.formule, 'qt')
+  return {
+    nuMg: nuMg.toFixed(2), nuKg: nuKg.toFixed(2),
+    pellMg: (nuMg + sumCol(d.formuleP, 'qn')).toFixed(2),
+    pellKg: (nuKg + sumCol(d.formuleP, 'qt')).toFixed(2)
+  }
+})
+// Excipient d'ajustement = ligne de formule marquée « B = ».
+const excipientAjustement = computed(() => { const r = (d.formule || []).find(f => String(f.qc).trim() === 'B ='); return r ? r.de : '' })
+// Mot d'unité selon la forme (comprimés / gélules).
+const uniteMot = computed(() => /g[ée]lule/i.test(d.entete.forme || '') ? 'gélules' : 'comprimés')
 const VERIF_PRELIM = [
   "Présence de tous les documents de l'instruction de fabrication",
   "L'habillage spécifique / réglementaire du personnel",
@@ -74,7 +94,7 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
   <!-- ======================= PAGE 5 — FORMULE ======================= -->
   <PageSheet :page="5">
     <div class="sec">4. FORMULE DE FABRICATION :</div>
-    <div class="stxt">La composition de <b>ROSUSTINE ® 10 mg</b> comprimé pelliculé est décrite dans le tableau ci-dessous :<br>Taille du lot (P<sub>th</sub>) 108.00 Kg soit 720 000 comprimés.</div>
+    <div class="stxt">La composition de <b>{{ d.entete.produit }}</b> {{ (d.entete.forme || '').toLowerCase() }} est décrite dans le tableau ci-dessous :<br>Taille du lot (P<sub>th</sub>) {{ totaux.nuKg }} Kg soit {{ d.entete.uniteDosee }} {{ uniteMot }}.</div>
     <table>
       <thead><tr><th>Code interne</th><th>Désignation</th><th>Quantité nécessaire / unité dosée (mg)</th><th>Qté Théorique / Lot [kg]</th><th>Quantité Corrigée / Lot [kg]</th></tr></thead>
       <tbody>
@@ -82,16 +102,16 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
           <td class="ta-c">{{ f.c }}</td><td>{{ f.de }}</td><td class="ta-c">{{ f.qn }}</td><td class="ta-c">{{ f.qt }}</td>
           <td><span v-if="f.qc==='A ='">A =&nbsp;<input class="cell cinl" v-model="d.pesee.A" /></span><span v-else-if="f.qc==='B ='">B =&nbsp;<input class="cell cinl" v-model="d.pesee.B" /></span><span v-else>{{ f.qc }}</span></td>
         </tr>
-        <tr class="k"><td colspan="2">Poids du comprimé nu (mg)</td><td class="ta-c">150.00</td><td>taille de lot (kg)</td><td class="ta-c">108.00</td></tr>
+        <tr class="k"><td colspan="2">Poids du comprimé nu (mg)</td><td class="ta-c">{{ totaux.nuMg }}</td><td>taille de lot (kg)</td><td class="ta-c">{{ totaux.nuKg }}</td></tr>
         <tr v-for="(f, i) in FORMULE_P" :key="'p'+i">
           <td class="ta-c">{{ f.c }}</td><td>{{ f.de }}</td><td class="ta-c">{{ f.qn }}</td><td class="ta-c">{{ f.qt }}</td><td class="ta-c">{{ f.qc }}</td>
         </tr>
-        <tr class="k"><td colspan="2">Poids du comprimé pelliculé (mg)</td><td class="ta-c">154.50</td><td>Taille de lot (kg)</td><td class="ta-c">112.21</td></tr>
+        <tr class="k"><td colspan="2">Poids du comprimé pelliculé (mg)</td><td class="ta-c">{{ totaux.pellMg }}</td><td>Taille de lot (kg)</td><td class="ta-c">{{ totaux.pellKg }}</td></tr>
       </tbody>
     </table>
     <div class="note">(1) La quantité du principe actif à incorporer est théorique, elle est basée sur un titre sur substance desséchée de 100% ; elle doit être ajustée si le titre du principe actif est ≤ 100 %.</div>
     <div class="note">(2) Un excès de 30% doit être pris en prévu pour compenser les pertes durant le pelliculage. &nbsp; Q.S : quantité suffisante.</div>
-    <div class="note">L'ajustement est fait avec l'excipient <b>Cellulose microcristalline PH102</b>.</div>
+    <div v-if="excipientAjustement" class="note">L'ajustement est fait avec l'excipient <b>{{ excipientAjustement }}</b>.</div>
   </PageSheet>
 
   <!-- ======================= PAGE 6 — AJUSTAGE ======================= -->
@@ -107,20 +127,20 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
       <thead><tr><th>Désignation Principe Actif</th><th>N° de lot interne</th><th>Titre %</th><th>Teneur en eau (%)</th><th>Quantité Théorique (g)</th><th>Quantité à peser (g)</th><th>Fait par</th><th>Date/Visa</th><th>Vérifier par</th><th>Date/Visa</th></tr></thead>
       <tbody>
         <tr v-for="(r, i) in d.pesee.ajustPA" :key="i">
-          <td>Rosuvastatine calcium</td>
+          <td>{{ PA[i] ? PA[i].de : '' }}</td>
           <td><input class="cell" v-model="r.nLot" /></td><td><input class="cell" v-model="r.titre" /></td><td><input class="cell" v-model="r.teneurEau" /></td>
           <td><input class="cell" v-model="r.qTheo" /></td><td><input class="cell" v-model="r.qPeser" /></td>
           <td colspan="2"><input class="cell" v-model="r.faitDV" /></td><td colspan="2"><input class="cell" v-model="r.verifDV" /></td>
         </tr>
       </tbody>
     </table>
-    <div class="stxt" style="margin-top:8px">▸ La différence entre la quantité théorique et la quantité à peser sera compensée avec l'excipient d'ajustage <b>Cellulose microcristalline PH102</b>.</div>
-    <div class="formula">B = ( Quantité théorique de Cellulose microcristalline PH102 + Quantité théorique (PA1) − Quantité réelle (PA1) ) = <input class="cell cinl" v-model="d.pesee.B" /></div>
+    <div class="stxt" style="margin-top:8px">▸ La différence entre la quantité théorique et la quantité à peser sera compensée avec l'excipient d'ajustage <b>{{ excipientAjustement }}</b>.</div>
+    <div class="formula">B = ( Quantité théorique de {{ excipientAjustement }} + Quantité théorique (PA1) − Quantité réelle (PA1) ) = <input class="cell cinl" v-model="d.pesee.B" /></div>
     <table>
       <thead><tr><th>Désignation Excipient d'ajustage</th><th>N° de lot</th><th>Quantité théorique (g)</th><th>Quantité à peser (g)</th><th>Fait par</th><th>Date/Visa</th><th>Vérifier par</th><th>Date/Visa</th></tr></thead>
       <tbody>
         <tr v-for="(r, i) in d.pesee.ajustExc" :key="i">
-          <td>Cellulose microcristalline PH102</td>
+          <td>{{ excipientAjustement }}</td>
           <td><input class="cell" v-model="r.nLot" /></td><td><input class="cell" v-model="r.qTheo" /></td><td><input class="cell" v-model="r.qPeser" /></td>
           <td colspan="2"><input class="cell" v-model="r.faitDV" /></td><td colspan="2"><input class="cell" v-model="r.verifDV" /></td>
         </tr>
@@ -135,28 +155,20 @@ function addInc () { d.pesee.incidents.push({ date: '', heureArret: '', nSac: ''
     <div class="flux">
       <div class="col">
         <h4>FLUX D'OPÉRATIONS</h4>
-        <div class="node">Pesée</div><div class="arrow">↓</div>
-        <div class="node">Mélange 01<div class="sub">- Rosuvastatine calcium<br>- Crospovidone</div></div><div class="arrow">↓</div>
-        <div class="node">Tamisage (Tamis à 0.8 mm)<div class="sub">Mélange 01</div></div><div class="arrow">↓</div>
-        <div class="node">Mélange 02<div class="sub">- Mélange 1<br>- Lactose monohydrate<br>- Cellulose microcristalline PH102<br>- Calcium phosphate tribasic</div></div><div class="arrow">↓</div>
-        <div class="node">Lubrification<div class="sub">- Stéarate de Magnésium (LIGAMED MF-2-V)</div></div><div class="arrow">↓</div>
-        <div class="node">Compression</div><div class="arrow">↓</div>
-        <div class="node">Pelliculage<div class="sub">Prémélange d'enrobage rose : Aquapolish P pink 041.47, Eau purifiée</div></div>
+        <div class="node">Pesée</div>
+        <div v-if="(d.diagramme.flux || []).length" class="arrow">↓</div>
+        <template v-for="(step, i) in (d.diagramme.flux || [])" :key="i">
+          <div class="node">{{ step.nom }}<div v-if="(step.items || []).filter(Boolean).length" class="sub"><span v-for="(it, j) in step.items.filter(Boolean)" :key="j">- {{ it }}<br></span></div></div>
+          <div v-if="i < d.diagramme.flux.length - 1" class="arrow">↓</div>
+        </template>
       </div>
       <div class="col">
         <h4>IPC</h4>
-        <div class="node">LOD — Uniformité de mélange</div>
-        <div class="node">Aspect — Masse individuelle — Dureté — Friabilité — Désagrégation</div>
-        <div class="node">Aspect — Masse — Désagrégation</div>
+        <div v-for="(x, i) in (d.diagramme.ipc || [])" :key="i" class="node">{{ x }}</div>
       </div>
       <div class="col">
         <h4>ÉQUIPEMENTS</h4>
-        <div class="node">Balances, codes : PR042 / PR325</div>
-        <div class="node">« Mélangeur en V » MAKINA 100L, code : PR210</div>
-        <div class="node">Calibreur CPS line, code PR036/PR097 — Kevin super mill, code PR03/PR311</div>
-        <div class="node">« Mélangeur en V » MPY 400, code : PR032</div>
-        <div class="node">Comprimeuse Fette 1200i, codes : PR012/PR097/PR205</div>
-        <div class="node">Pelliculeuse LABORTECNIC, code : PR024</div>
+        <div v-for="(x, i) in (d.diagramme.equipements || [])" :key="i" class="node">{{ x }}</div>
       </div>
     </div>
   </PageSheet>

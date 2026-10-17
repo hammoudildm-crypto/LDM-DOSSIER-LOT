@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, computed } from 'vue'
+import { ETAPES_FAB } from '../produitsRef.js'
 
 const props = defineProps({
   catalogue: { type: Object, default: () => ({}) },
@@ -18,6 +19,18 @@ const busy = ref(false)
 
 const noms = computed(() => Object.keys(props.catalogue).sort((a, b) => a.localeCompare(b)))
 const estPerso = (nom) => props.perso && props.perso.has && props.perso.has(nom)
+// Recherche : filtre la liste par nom, forme ou référence IF.
+const recherche = ref('')
+const nomsFiltres = computed(() => {
+  const q = recherche.value.trim().toLowerCase()
+  if (!q) return noms.value
+  return noms.value.filter(nom => {
+    const e = (props.catalogue[nom] && props.catalogue[nom].entete) || {}
+    return nom.toLowerCase().includes(q) ||
+      String(e.forme || '').toLowerCase().includes(q) ||
+      String(e.refIf || '').toLowerCase().includes(q)
+  })
+})
 
 /* ---------- Modèle de formulaire ---------- */
 function produitVide () {
@@ -31,8 +44,16 @@ function produitVide () {
     formuleP: [],
     mats: [['', '']],
     exc: [['', '', '']],
-    equip: [['', '']]
+    equip: [['', '']],
+    diagramme: { flux: [], ipc: [], equipements: [] },
+    formulaire: { sections: [] },
+    gamme: ['pesee', 'tamisage_melange', 'compression', 'pelliculage']   // étapes de fabrication du produit
   }
+}
+function toggleEtape (k) {
+  if (!Array.isArray(f.gamme)) f.gamme = []
+  const i = f.gamme.indexOf(k)
+  if (i >= 0) f.gamme.splice(i, 1); else f.gamme.push(k)
 }
 const f = reactive(produitVide())
 function chargerForm (src) {
@@ -40,6 +61,9 @@ function chargerForm (src) {
   Object.assign(f, produitVide(), c)
   // garantir les tableaux
   for (const k of ['redacteurs', 'verificateurs', 'approbateurs', 'formule', 'formuleP', 'mats', 'exc', 'equip']) if (!Array.isArray(f[k])) f[k] = []
+  if (!Array.isArray(f.gamme) || !f.gamme.length) f.gamme = produitVide().gamme
+  if (!f.diagramme || typeof f.diagramme !== 'object') f.diagramme = { flux: [], ipc: [], equipements: [] }
+  for (const k of ['flux', 'ipc', 'equipements']) if (!Array.isArray(f.diagramme[k])) f.diagramme[k] = []
 }
 
 /* ---------- Navigation ---------- */
@@ -54,6 +78,11 @@ const addMat = () => f.mats.push(['', ''])
 const addExc = () => f.exc.push(['', '', ''])
 const addEquip = () => f.equip.push(['', ''])
 const del = (arr, i) => arr.splice(i, 1)
+// Diagramme de fabrication
+const addFluxStep = () => f.diagramme.flux.push({ nom: '', items: [] })
+const addIpc = () => f.diagramme.ipc.push('')
+const addEquipLigne = () => f.diagramme.equipements.push('')
+const setItems = (step, val) => { step.items = String(val).split('\n') }
 
 // Pré-remplissage matières / excipients depuis la formule (à ajuster ensuite).
 function genererMatieres () {
@@ -105,12 +134,18 @@ function choisir (nom) { emit('selectionner', nom); emit('close') }
       <div v-if="mode === 'list'" class="gp-body">
         <div class="gp-toolbar">
           <button class="gp-btn primary" @click="ouvrirNouveau">+ Nouveau produit</button>
-          <span class="gp-count">{{ noms.length }} produit(s)</span>
+          <div class="gp-search">
+            <span class="gp-search-ic">🔎</span>
+            <input class="gp-search-in" v-model="recherche" type="search" placeholder="Rechercher (nom, forme, réf. IF)…" />
+            <button v-if="recherche" class="gp-search-x" type="button" title="Effacer" @click="recherche = ''">✕</button>
+          </div>
+          <span class="gp-count">{{ recherche ? nomsFiltres.length + ' / ' + noms.length : noms.length }} produit(s)</span>
         </div>
         <table class="gp-list">
           <thead><tr><th>Produit</th><th>Forme</th><th>Réf. IF</th><th>Origine</th><th class="ta-r">Actions</th></tr></thead>
           <tbody>
-            <tr v-for="nom in noms" :key="nom">
+            <tr v-if="!nomsFiltres.length"><td colspan="5" class="gp-empty">Aucun produit ne correspond à « {{ recherche }} ».</td></tr>
+            <tr v-for="nom in nomsFiltres" :key="nom">
               <td><b>{{ nom }}</b></td>
               <td>{{ catalogue[nom]?.entete?.forme || '—' }}</td>
               <td>{{ catalogue[nom]?.entete?.refIf || '—' }}</td>
@@ -129,6 +164,15 @@ function choisir (nom) { emit('selectionner', nom); emit('close') }
       <!-- ========================= ÉDITION ========================= -->
       <div v-else class="gp-body">
         <p class="gp-hint">Astuce : les codes des <b>principes actifs</b> commencent par <code>MPPA</code>, ceux des <b>excipients</b> par <code>MPEX</code> — l'application s'en sert pour remplir la page « Pesée des principes actifs » et dimensionner les tableaux.</p>
+
+        <h3>Gamme de fabrication (étapes du dossier)</h3>
+        <p class="gp-hint2">Cochez les étapes par lesquelles ce produit passe. Le formulaire du dossier n'affichera que ces étapes (onglets de phases).</p>
+        <div class="gp-gamme">
+          <label v-for="e in ETAPES_FAB" :key="e.k" class="gp-etape" :class="{ on: (f.gamme || []).includes(e.k) }">
+            <input type="checkbox" :checked="(f.gamme || []).includes(e.k)" @change="toggleEtape(e.k)" />
+            <span>{{ e.nom }}</span>
+          </label>
+        </div>
 
         <h3>En-tête de l'IF</h3>
         <div class="gp-grid3">
@@ -228,6 +272,29 @@ function choisir (nom) { emit('selectionner', nom); emit('close') }
             </tr>
           </tbody>
         </table>
+
+        <h3>Diagramme de fabrication (page 8)</h3>
+        <p class="gp-hint">Propre à chaque produit : le flux des opérations (mélange, compression, pelliculage…), les contrôles en cours (IPC) et les équipements de la ligne.</p>
+
+        <div class="gp-subh">Flux d'opérations <button class="gp-btn xs ghost" @click="addFluxStep">+ étape</button></div>
+        <p v-if="!f.diagramme.flux.length" class="gp-empty2">Aucune étape — « Pesée » est ajoutée automatiquement en tête du diagramme.</p>
+        <div v-for="(step, i) in f.diagramme.flux" :key="i" class="gp-flux-row">
+          <input class="gp-flux-nom" v-model="step.nom" placeholder="Nom de l'étape (ex. Mélange 01)" />
+          <textarea class="gp-flux-items" :value="(step.items || []).join('\n')" @input="setItems(step, $event.target.value)" placeholder="Composants, un par ligne"></textarea>
+          <button class="gp-del" @click="del(f.diagramme.flux, i)">✕</button>
+        </div>
+
+        <div class="gp-subh">Contrôles en cours (IPC) <button class="gp-btn xs ghost" @click="addIpc">+ ligne</button></div>
+        <div v-for="(x, i) in f.diagramme.ipc" :key="'ipc'+i" class="gp-line-row">
+          <input v-model="f.diagramme.ipc[i]" placeholder="Ex. Aspect — Masse — Dureté — Friabilité…" />
+          <button class="gp-del" @click="del(f.diagramme.ipc, i)">✕</button>
+        </div>
+
+        <div class="gp-subh">Équipements de la ligne <button class="gp-btn xs ghost" @click="addEquipLigne">+ ligne</button></div>
+        <div v-for="(x, i) in f.diagramme.equipements" :key="'eq'+i" class="gp-line-row">
+          <input v-model="f.diagramme.equipements[i]" placeholder="Ex. Comprimeuse Fette 1200i, code PR012" />
+          <button class="gp-del" @click="del(f.diagramme.equipements, i)">✕</button>
+        </div>
       </div>
 
       <!-- ========================= PIED ========================= -->
@@ -256,9 +323,21 @@ function choisir (nom) { emit('selectionner', nom); emit('close') }
 .gp-warn code, .gp-hint code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; }
 .gp-ok { margin: 12px 20px 0; background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; padding: 9px 13px; border-radius: 8px; font-size: 13px; }
 .gp-err { margin: 12px 20px 0; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 9px 13px; border-radius: 8px; font-size: 13px; }
-.gp-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.gp-count { font-size: 12px; color: #64748b; }
+.gp-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.gp-count { font-size: 12px; color: #64748b; white-space: nowrap; }
+.gp-search { position: relative; display: inline-flex; align-items: center; flex: 1 1 220px; max-width: 360px; }
+.gp-search-ic { position: absolute; left: 10px; font-size: 13px; opacity: .6; pointer-events: none; }
+.gp-search-in { font: inherit; font-size: 13px; color: #0f172a; width: 100%; padding: 8px 28px 8px 30px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+.gp-search-in:focus { outline: none; border-color: #0891b2; box-shadow: 0 0 0 3px #cffafe; }
+.gp-search-x { position: absolute; right: 7px; border: 0; background: #e2e8f0; color: #475569; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.gp-search-x:hover { background: #cbd5e1; }
+.gp-empty { text-align: center; color: #94a3b8; font-style: italic; padding: 16px; }
 .gp-hint { font-size: 12.5px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px 12px; margin: 0 0 14px; }
+.gp-hint2 { font-size: 12px; color: #64748b; margin: 0 0 8px; }
+.gp-gamme { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.gp-etape { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 7px 12px; font-size: 13px; cursor: pointer; background: #fff; color: #334155; }
+.gp-etape.on { border-color: #0e7490; background: #ecfeff; color: #0e7490; font-weight: 600; }
+.gp-etape input { margin: 0; cursor: pointer; }
 .gp-list, .gp-edit { width: 100%; border-collapse: collapse; font-size: 13px; }
 .gp-list th, .gp-list td { border-bottom: 1px solid #eef2f6; padding: 8px 8px; text-align: left; vertical-align: middle; }
 .gp-list th { font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: #64748b; }
@@ -278,6 +357,13 @@ h3:first-of-type { margin-top: 4px; }
 .gp-edit input { width: 100%; border: 0; font: inherit; font-size: 12.5px; padding: 6px 6px; background: transparent; }
 .gp-edit input:focus { outline: 2px solid #67e8f9; border-radius: 4px; }
 .gp-empty { text-align: center; color: #94a3b8; font-style: italic; padding: 8px; }
+.gp-empty2 { color: #94a3b8; font-style: italic; font-size: 12px; margin: 2px 0 6px; }
+.gp-subh { font-size: 12px; font-weight: 700; color: #334155; margin: 12px 0 6px; display: flex; align-items: center; gap: 10px; }
+.gp-flux-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 7px; margin-bottom: 6px; align-items: start; }
+.gp-flux-nom { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; }
+.gp-flux-items { font: inherit; font-size: 12.5px; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; min-height: 48px; resize: vertical; }
+.gp-line-row { display: grid; grid-template-columns: 1fr auto; gap: 7px; margin-bottom: 5px; }
+.gp-line-row input { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 7px; }
 .gp-sig { margin-bottom: 10px; }
 .gp-sig-h { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 700; color: #155e75; margin-bottom: 5px; }
 .gp-sig-row { display: grid; grid-template-columns: 1fr 1.6fr auto; gap: 7px; margin-bottom: 5px; }

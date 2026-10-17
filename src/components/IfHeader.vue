@@ -29,7 +29,7 @@ const d = inject('doc')
     </table>
 
     <div class="prod">
-      <div class="p1">{{ d.entete.produit }} / {{ d.entete.dci2 }}</div>
+      <div class="p1">{{ d.produit || d.entete.produit }} / {{ d.entete.dci2 }}</div>
       <div class="p2">{{ d.entete.forme }}</div>
     </div>
 
